@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "../lib/supabase";
 
 const BUCKET_NAME = "sertifikat";   // GANTI jika nama bucket Storage kamu beda
 const TABLE_NAME  = "sertifikat";   // Nama tabel di screenshot kamu

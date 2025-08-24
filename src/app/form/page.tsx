@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { EMPLOYEE_NAMES } from "@/constants/employees";
 
-export default function Page() {
+export default function FormPage() {
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -24,8 +24,7 @@ export default function Page() {
 
     setLoading(true);
 
-    // 👉 contoh: untuk sekarang file_url hanya disimpan nama file
-    // kalau mau benar-benar upload ke storage, nanti kita atur storage Supabase/Drive
+    // sementara: simpan nama file saja ke kolom file_url
     const fileUrl = file.name;
 
     const { error } = await supabase.from("sertifikat").insert({
@@ -47,11 +46,10 @@ export default function Page() {
     }
   };
 
+  // ❗️DIBUNGKUS SATU PARENT <main> BIAR TIDAK ERROR JSX
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-6">
-        Upload Sertifikat JP
-      </h1>
+      <h1 className="text-2xl font-semibold mb-6">Form Upload Sertifikat JP</h1>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Nama Pegawai */}
@@ -86,7 +84,7 @@ export default function Page() {
             id="certNumber"
             name="certNumber"
             type="text"
-            placeholder="contoh: 0003/TEKNIS-SM/237/BPS/P/2025"
+            placeholder="0003/TEKNIS-SM/237/BPS/P/2025"
             className="rounded-md border px-3 py-2"
             required
           />
@@ -101,7 +99,7 @@ export default function Page() {
             id="trainingName"
             name="trainingName"
             type="text"
-            placeholder="contoh: Pelatihan SE"
+            placeholder="Pelatihan SE"
             className="rounded-md border px-3 py-2"
             required
           />
@@ -116,8 +114,8 @@ export default function Page() {
             id="jp"
             name="jp"
             type="number"
-            min="1"
-            placeholder="contoh: 6"
+            min={1}
+            placeholder="6"
             className="rounded-md border px-3 py-2"
             required
           />
