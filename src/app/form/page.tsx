@@ -1,11 +1,75 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { EMPLOYEE_NAMES } from "@/constants/employees";
 
-export default function FormPage() {
+// ⬇️ Recharts
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+type Row = {
+  employee_name: string;
+  jp: number | null;
+};
+
+export default function Page() {
   const [loading, setLoading] = useState(false);
+
+  // --- state untuk chart ---
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loadingChart, setLoadingChart] = useState(true);
+  const [chartError, setChartError] = useState<string | null>(null);
+
+  // Ambil data utk chart (total JP per pegawai)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingChart(true);
+      setChartError(null);
+      const { data, error } = await supabase
+        .from("sertifikat")
+        .select("employee_name, jp");
+      if (cancelled) return;
+
+      if (error) {
+        setChartError(error.message);
+        setRows([]);
+      } else {
+        setRows((data || []) as Row[]);
+      }
+      setLoadingChart(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Olah data → agregasi per pegawai
+  const chartData = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      const name = r.employee_name || "—";
+      const jp = Number(r.jp || 0);
+      map.set(name, (map.get(name) || 0) + jp);
+    }
+    // biar rapi: tampilkan hanya pegawai yg ada di EMPLOYEE_NAMES (opsional)
+    const result = Array.from(map, ([name, total]) => ({
+      name,
+      totalJP: total,
+    }));
+
+    // urutkan desc
+    result.sort((a, b) => b.totalJP - a.totalJP);
+    return result;
+  }, [rows]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -24,7 +88,7 @@ export default function FormPage() {
 
     setLoading(true);
 
-    // sementara: simpan nama file saja ke kolom file_url
+    // sementara: simpan nama file sbg file_url
     const fileUrl = file.name;
 
     const { error } = await supabase.from("sertifikat").insert({
@@ -43,15 +107,28 @@ export default function FormPage() {
     } else {
       alert("Data berhasil tersimpan!");
       e.currentTarget.reset();
+
+      // refresh data chart biar langsung kelihatan naik
+      setLoadingChart(true);
+      const { data, error: err2 } = await supabase
+        .from("sertifikat")
+        .select("employee_name, jp");
+      if (err2) {
+        setChartError(err2.message);
+        setRows([]);
+      } else {
+        setRows((data || []) as Row[]);
+      }
+      setLoadingChart(false);
     }
   };
 
-  // ❗️DIBUNGKUS SATU PARENT <main> BIAR TIDAK ERROR JSX
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-6">Form Upload Sertifikat JP</h1>
+    <main className="mx-auto max-w-5xl px-4 py-8">
+      <h1 className="text-2xl font-semibold mb-6">Upload Sertifikat JP</h1>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
+      {/* FORM */}
+      <form onSubmit={handleSubmit} className="space-y-5 rounded-lg border p-4">
         {/* Nama Pegawai */}
         <div className="flex flex-col gap-1">
           <label htmlFor="employeeName" className="text-sm font-medium">
@@ -84,7 +161,7 @@ export default function FormPage() {
             id="certNumber"
             name="certNumber"
             type="text"
-            placeholder="0003/TEKNIS-SM/237/BPS/P/2025"
+            placeholder="contoh: 0003/TEKNIS-SM/237/BPS/P/2025"
             className="rounded-md border px-3 py-2"
             required
           />
@@ -99,7 +176,7 @@ export default function FormPage() {
             id="trainingName"
             name="trainingName"
             type="text"
-            placeholder="Pelatihan SE"
+            placeholder="contoh: Pelatihan SE"
             className="rounded-md border px-3 py-2"
             required
           />
@@ -114,8 +191,8 @@ export default function FormPage() {
             id="jp"
             name="jp"
             type="number"
-            min={1}
-            placeholder="6"
+            min="1"
+            placeholder="contoh: 6"
             className="rounded-md border px-3 py-2"
             required
           />
@@ -145,6 +222,44 @@ export default function FormPage() {
           {loading ? "Menyimpan…" : "Simpan & Unggah"}
         </button>
       </form>
+
+      {/* CHART */}
+      <section className="mt-10 rounded-lg border p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Diagram Batang JP per Pegawai</h2>
+          {/* Info kecil */}
+          <span className="text-xs text-gray-500">
+            Sumber: tabel <code>sertifikat</code> (total JP)
+          </span>
+        </div>
+
+        {/* Penting: container dengan tinggi tetap */}
+        <div className="h-80 w-full">
+          {loadingChart ? (
+            <div className="flex h-full items-center justify-center text-gray-500">
+              Memuat chart…
+            </div>
+          ) : chartError ? (
+            <div className="flex h-full items-center justify-center text-red-600">
+              Gagal memuat: {chartError}
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-gray-500">
+              Belum ada data untuk ditampilkan
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="totalJP" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </section>
     </main>
   );
 }
