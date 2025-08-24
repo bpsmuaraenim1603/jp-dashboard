@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root{
+  --se-blue: #0074D9;
+  --se-navy: #0A2540;
+  --se-cyan: #39CCCC;
+  --se-slate: #94A3B8;
+  --se-bg: radial-gradient(80% 60% at 10% 10%, rgba(0,116,217,0.20), transparent 60%),
+           radial-gradient(70% 50% at 90% 20%, rgba(57,204,204,0.25), transparent 60%),
+           linear-gradient(180deg, #0b1020 0%, #0f172a 100%);
+}
+
+html, body { height: 100%; }
+
+body{
+  background: var(--se-bg);
+  color: #eaf2ff;
+}
+
+@media (prefers-color-scheme: light){
+  body{
+    background:
+      radial-gradient(80% 60% at 10% 10%, rgba(0,116,217,0.12), transparent 60%),
+      radial-gradient(70% 50% at 90% 20%, rgba(57,204,204,0.18), transparent 60%),
+      linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
+    color: #0A2540;
+  }
+}
+
+/* subtle noise grain */
+.body-grain{
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' opacity='0.05' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 200px 200px;
+}
+
+/* glass util */
+.glass{
+  @apply bg-white/10 backdrop-blur-md border border-white/10 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.4)] rounded-2xl;
+}
+.glass-light{
+  @apply bg-white/60 backdrop-blur-xl border border-white/80 text-slate-800;
+}
+
+/* focus-ring util */
+.focus-ring{ @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#39CCCC] focus-visible:ring-offset-transparent; }
+
+/* nice card hover */
+.card-hover{ @apply transition-all duration-300 hover:translate-y-[-2px] hover:shadow-[0_20px_35px_-15px_rgba(0,116,217,0.45)]; }
+
+/* gradient text */
+.text-gradient{
+  background: linear-gradient(90deg, #39CCCC, #0074D9);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
