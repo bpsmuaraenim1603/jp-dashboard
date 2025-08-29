@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { EMPLOYEE_NAMES } from "@/constants/employees";
 import JPBarChart from "@/components/ui/JPBarChart";
-import Sertifikatlist from "@/components/Sertifikatlist"; // pakai nama file-mu
+import Sertifikatlist from "@/components/Sertifikatlist";
 
 type Row = {
   employee_name: string;
   jp: number | null;
+  created_at?: string | null;
 };
 
 export default function Page() {
@@ -17,10 +18,8 @@ export default function Page() {
   const [loadingChart, setLoadingChart] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
 
-  // >>> NEW: pegawai yang dipilih (untuk memunculkan & memfilter tabel)
   const [selectedEmployee, setSelectedEmployee] = useState<string>("");
 
-  // Ambil data untuk chart
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -28,7 +27,7 @@ export default function Page() {
       setChartError(null);
       const { data, error } = await supabase
         .from("sertifikat")
-        .select("employee_name, jp");
+        .select("employee_name, jp, created_at");
 
       if (cancelled) return;
       if (error) {
@@ -44,7 +43,6 @@ export default function Page() {
     };
   }, []);
 
-  // Agregasi JP per pegawai untuk chart
   const chartData = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of rows) {
@@ -57,7 +55,43 @@ export default function Page() {
     return result;
   }, [rows]);
 
-  // Submit form (upload ke Storage + simpan URL ke DB)
+  const TARGET_JP = 20;
+  const summary = useMemo(() => {
+    const totalCerts = rows.length;
+    const totalJP = rows.reduce((acc, r) => acc + Number(r.jp || 0), 0);
+
+    const perEmp = new Map<string, number>();
+    rows.forEach((r) => {
+      const name = r.employee_name || "—";
+      perEmp.set(name, (perEmp.get(name) || 0) + Number(r.jp || 0));
+    });
+
+    const uniqueEmployees = Math.max(perEmp.size, 1);
+    const avgJP = totalJP / uniqueEmployees;
+
+    let top: { name: string; jp: number } | null = null;
+    for (const [name, jp] of perEmp) {
+      if (!top || jp > top.jp) top = { name, jp };
+    }
+
+    const reachedTargetCount = Array.from(perEmp.values()).filter((v) => v >= TARGET_JP).length;
+
+    const today = new Date().toDateString();
+    const uploadsToday = rows.filter((r) =>
+      r.created_at ? new Date(r.created_at).toDateString() === today : false
+    ).length;
+
+    return {
+      totalCerts,
+      totalJP,
+      avgJP,
+      topEmployee: top,
+      reachedTargetCount,
+      totalEmployees: EMPLOYEE_NAMES.length,
+      uploadsToday,
+    };
+  }, [rows]);
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -117,15 +151,12 @@ export default function Page() {
 
     alert("Data berhasil tersimpan!");
     form.reset();
-
-    // >>> NEW: setelah submit, otomatis set filter ke pegawai tersebut
     setSelectedEmployee(employeeName);
 
-    // refresh chart (opsional)
     setLoadingChart(true);
     const { data, error: err2 } = await supabase
       .from("sertifikat")
-      .select("employee_name, jp");
+      .select("employee_name, jp, created_at");
     if (err2) {
       setChartError(err2.message);
       setRows([]);
@@ -137,14 +168,40 @@ export default function Page() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
-      {/* Spasi vertikal antar section */}
       <div className="space-y-10">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-semibold">Dashboard & Upload Sertifikat JP</h1>
-          <p className="text-sm text-gray-500">
-            Rekap JP per pegawai + Form unggah sertifikat
-          </p>
-        </header>
+        {/* ===== RINGKASAN (di atas chart) ===== */}
+<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+  <div className="rounded-xl bg-[#00AEEF]/90 text-white p-4 shadow-md">
+    <p className="text-xs opacity-80">Total Sertifikat</p>
+    <p className="mt-1 text-2xl font-bold">{summary.totalCerts}</p>
+  </div>
+  <div className="rounded-xl bg-[#0077C8]/90 text-white p-4 shadow-md">
+    <p className="text-xs opacity-80">Total JP</p>
+    <p className="mt-1 text-2xl font-bold">{summary.totalJP}</p>
+  </div>
+  <div className="rounded-xl bg-[#FF6F20]/90 text-white p-4 shadow-md">
+    <p className="text-xs opacity-80">Rata-rata JP</p>
+    <p className="mt-1 text-2xl font-bold">{summary.avgJP.toFixed(1)}</p>
+  </div>
+  <div className="rounded-xl bg-[#00A99D]/90 text-white p-4 shadow-md">
+    <p className="text-xs opacity-80">Capai Target (≥20 JP)</p>
+    <p className="mt-1 text-2xl font-bold">
+      {summary.reachedTargetCount}/{summary.totalEmployees}
+    </p>
+  </div>
+  <div className="rounded-xl bg-[#00558C]/90 text-white p-4 shadow-md">
+    <p className="text-xs opacity-80">Pegawai Teraktif</p>
+    <p className="mt-1 text-sm font-semibold">
+      {summary.topEmployee?.name ?? "—"}
+    </p>
+    <p className="text-xs opacity-80">{summary.topEmployee?.jp ?? 0} JP</p>
+  </div>
+  <div className="rounded-xl bg-[#29ABE2]/90 text-white p-4 shadow-md">
+    <p className="text-xs opacity-80">Upload Hari Ini</p>
+    <p className="mt-1 text-2xl font-bold">{summary.uploadsToday}</p>
+  </div>
+</div>
+
 
         {/* === CHART === */}
         <section className="rounded-xl border bg-white shadow-sm p-4">
@@ -175,8 +232,8 @@ export default function Page() {
               <select
                 id="employeeName"
                 name="employeeName"
-                value={selectedEmployee} // <<< controlled
-                onChange={(e) => setSelectedEmployee(e.target.value)} // <<< set state
+                value={selectedEmployee}
+                onChange={(e) => setSelectedEmployee(e.target.value)}
                 className="rounded-md border px-3 py-2"
                 required
               >
@@ -262,8 +319,7 @@ export default function Page() {
           </form>
         </section>
 
-        {/* === TABEL SERTIFIKAT ===
-            Hanya muncul setelah pegawai dipilih */}
+        {/* === TABEL SERTIFIKAT === */}
         {selectedEmployee && (
           <section className="rounded-xl border bg-white shadow-sm p-4">
             <Sertifikatlist employeeName={selectedEmployee} />
