@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { EMPLOYEE_NAMES } from "@/constants/employees";
 import JPBarChart from "@/components/ui/JPBarChart";
+import Sertifikatlist from "@/components/Sertifikatlist"; // pakai nama file-mu
 
 type Row = {
   employee_name: string;
@@ -12,13 +13,14 @@ type Row = {
 
 export default function Page() {
   const [loading, setLoading] = useState(false);
-
-  // --- state untuk chart ---
   const [rows, setRows] = useState<Row[]>([]);
   const [loadingChart, setLoadingChart] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
 
-  // Ambil data utk chart (total JP per pegawai)
+  // >>> NEW: pegawai yang dipilih (untuk memunculkan & memfilter tabel)
+  const [selectedEmployee, setSelectedEmployee] = useState<string>("");
+
+  // Ambil data untuk chart
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -29,7 +31,6 @@ export default function Page() {
         .select("employee_name, jp");
 
       if (cancelled) return;
-
       if (error) {
         setChartError(error.message);
         setRows([]);
@@ -38,13 +39,12 @@ export default function Page() {
       }
       setLoadingChart(false);
     })();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Olah data → agregasi per pegawai → { nama, totalJP }
+  // Agregasi JP per pegawai untuk chart
   const chartData = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of rows) {
@@ -57,47 +57,71 @@ export default function Page() {
     return result;
   }, [rows]);
 
+  // Submit form (upload ke Storage + simpan URL ke DB)
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const form = e.currentTarget;            // simpan ref form (aman setelah await)
+    const form = e.currentTarget;
     const fd = new FormData(form);
 
-    const employeeName = String(fd.get("employeeName") || "");
-    const certNumber   = String(fd.get("certNumber")   || "");
-    const trainingName = String(fd.get("trainingName") || "");
-    const jp           = Number(fd.get("jp")           || 0);
-    const file         = fd.get("file") as File | null;
+    const employeeName = String(fd.get("employeeName") || "").trim();
+    const certNumberRaw = String(fd.get("certNumber") || "").trim();
+    const trainingName = String(fd.get("trainingName") || "").trim();
+    const jp = Number(fd.get("jp") || 0);
+    const file = fd.get("file") as File | null;
 
-    if (!employeeName || !certNumber || !trainingName || !jp || !file) {
-      alert("Semua field wajib diisi!");
+    const certNumber = certNumberRaw === "" ? "-" : certNumberRaw;
+
+    if (!employeeName || !trainingName || !jp || !file) {
+      alert("Nama pegawai, nama diklat, JP, dan PDF wajib diisi!");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Ukuran file melebihi 10MB");
       return;
     }
 
     setLoading(true);
 
-    // sementara: simpan nama file sbg file_url
-    const fileUrl = file.name;
+    const BUCKET = "sertifikat";
+    const safeName = file.name.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
+    const folder = employeeName.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
+    const path = `${folder}/${Date.now()}-${safeName}`;
 
-    const { error } = await supabase.from("sertifikat").insert({
+    const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: "application/pdf",
+    });
+    if (upErr) {
+      setLoading(false);
+      alert("Gagal mengunggah PDF: " + upErr.message);
+      return;
+    }
+
+    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    const publicUrl = pub.publicUrl;
+
+    const { error: dbErr } = await supabase.from("sertifikat").insert({
       employee_name: employeeName,
-      cert_number:   certNumber,
+      cert_number: certNumber,
       training_name: trainingName,
       jp,
-      file_url:      fileUrl,
+      file_url: publicUrl,
     });
 
     setLoading(false);
-
-    if (error) {
-      console.error(error);
-      alert("Gagal simpan: " + error.message);
+    if (dbErr) {
+      alert("Gagal simpan ke database: " + dbErr.message);
       return;
     }
 
     alert("Data berhasil tersimpan!");
     form.reset();
 
-    // refresh chart
+    // >>> NEW: setelah submit, otomatis set filter ke pegawai tersebut
+    setSelectedEmployee(employeeName);
+
+    // refresh chart (opsional)
     setLoadingChart(true);
     const { data, error: err2 } = await supabase
       .from("sertifikat")
@@ -112,22 +136,19 @@ export default function Page() {
   };
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold">Dashboard & Upload Sertifikat JP</h1>
-        <p className="text-sm text-gray-500">Rekap JP per pegawai + Form unggah sertifikat</p>
-      </header>
+    <main className="mx-auto max-w-5xl px-4 py-8">
+      {/* Spasi vertikal antar section */}
+      <div className="space-y-10">
+        <header className="space-y-1">
+          <h1 className="text-2xl font-semibold">Dashboard & Upload Sertifikat JP</h1>
+          <p className="text-sm text-gray-500">
+            Rekap JP per pegawai + Form unggah sertifikat
+          </p>
+        </header>
 
-      {/* Layout: mobile 1 kolom, desktop 2 kolom */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Kartu Chart */}
-        <section className="rounded-lg border p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Diagram Batang JP per Pegawai</h2>
-            <span className="text-xs text-gray-500">Sumber: tabel <code>sertifikat</code></span>
-          </div>
-
-          <div className="h-80 w-full">
+        {/* === CHART === */}
+        <section className="rounded-xl border bg-white shadow-sm p-4">
+          <div className="h-[360px] w-full">
             {loadingChart ? (
               <div className="flex h-full items-center justify-center text-gray-500">
                 Memuat chart…
@@ -142,10 +163,9 @@ export default function Page() {
           </div>
         </section>
 
-        {/* Kartu Form */}
-        <section className="rounded-lg border p-4">
+        {/* === FORM === */}
+        <section className="rounded-xl border bg-white shadow-sm p-6">
           <h2 className="mb-4 text-lg font-semibold">Upload Sertifikat JP</h2>
-
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Nama Pegawai */}
             <div className="flex flex-col gap-1">
@@ -155,33 +175,41 @@ export default function Page() {
               <select
                 id="employeeName"
                 name="employeeName"
-                defaultValue=""
+                value={selectedEmployee} // <<< controlled
+                onChange={(e) => setSelectedEmployee(e.target.value)} // <<< set state
                 className="rounded-md border px-3 py-2"
                 required
               >
-                <option value="" disabled>— Pilih nama pegawai —</option>
+                <option value="" disabled>
+                  — Pilih nama pegawai —
+                </option>
                 {EMPLOYEE_NAMES.map((n) => (
-                  <option key={n} value={n}>{n}</option>
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
                 ))}
               </select>
             </div>
 
-            {/* Nomor Sertifikat */}
+            {/* Nomor Sertifikat (opsional) */}
             <div className="flex flex-col gap-1">
-              <label htmlFor="certNumber" className="text-sm font-medium">Nomor Sertifikat</label>
+              <label htmlFor="certNumber" className="text-sm font-medium">
+                Nomor Sertifikat (opsional)
+              </label>
               <input
                 id="certNumber"
                 name="certNumber"
                 type="text"
-                placeholder="contoh: 0003/TEKNIS-SM/237/BPS/P/2025"
+                placeholder="isi nomor, atau kosongkan / '-'"
                 className="rounded-md border px-3 py-2"
-                required
               />
             </div>
 
             {/* Nama Diklat */}
             <div className="flex flex-col gap-1">
-              <label htmlFor="trainingName" className="text-sm font-medium">Nama Diklat</label>
+              <label htmlFor="trainingName" className="text-sm font-medium">
+                Nama Diklat
+              </label>
               <input
                 id="trainingName"
                 name="trainingName"
@@ -194,7 +222,9 @@ export default function Page() {
 
             {/* Banyak JP */}
             <div className="flex flex-col gap-1">
-              <label htmlFor="jp" className="text-sm font-medium">Banyak JP</label>
+              <label htmlFor="jp" className="text-sm font-medium">
+                Banyak JP
+              </label>
               <input
                 id="jp"
                 name="jp"
@@ -208,7 +238,9 @@ export default function Page() {
 
             {/* Upload File Sertifikat */}
             <div className="flex flex-col gap-1">
-              <label htmlFor="file" className="text-sm font-medium">Upload PDF Sertifikat</label>
+              <label htmlFor="file" className="text-sm font-medium">
+                Upload PDF Sertifikat
+              </label>
               <input
                 id="file"
                 name="file"
@@ -229,6 +261,14 @@ export default function Page() {
             </button>
           </form>
         </section>
+
+        {/* === TABEL SERTIFIKAT ===
+            Hanya muncul setelah pegawai dipilih */}
+        {selectedEmployee && (
+          <section className="rounded-xl border bg-white shadow-sm p-4">
+            <Sertifikatlist employeeName={selectedEmployee} />
+          </section>
+        )}
       </div>
     </main>
   );
