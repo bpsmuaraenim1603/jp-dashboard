@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase"; // pakai alias @/lib, sesuaikan kalau beda
+import { supabase } from "@/lib/supabase";
 
 type Row = {
   id: string;
@@ -19,6 +19,11 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
   const [q, setQ] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // === Edit state (ganti PDF) ===
+  const [editRow, setEditRow] = useState<Row | null>(null);
+  const [newFile, setNewFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+
   // ====== CONFIG ======
   const BUCKET = "sertifikat";
 
@@ -26,12 +31,12 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const query = supabase
+      let query = supabase
         .from("sertifikat")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (employeeName) query.eq("employee_name", employeeName);
+      if (employeeName) query = query.eq("employee_name", employeeName);
 
       const { data, error } = await query;
       if (cancelled) return;
@@ -53,18 +58,17 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
     const key = q.trim().toLowerCase();
     if (!key) return rows;
     return rows.filter((r) =>
-      [
-        r.employee_name,
-        r.training_name || "",
-        r.cert_number || "",
-      ]
+      [r.employee_name, r.training_name || "", r.cert_number || ""]
         .join(" ")
         .toLowerCase()
         .includes(key)
     );
   }, [rows, q]);
 
-  // ====== Helpers ======
+  // ===== Helpers =====
+  const safe = (s: string) =>
+    s.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
+
   // Ekstrak storage path dari public URL supabase:
   // contoh URL: .../storage/v1/object/public/sertifikat/<PATH_ASLI>
   function extractStoragePathFromPublicUrl(url: string | null): string | null {
@@ -81,6 +85,16 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
     }
   }
 
+  async function refresh() {
+    let query = supabase
+      .from("sertifikat")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (employeeName) query = query.eq("employee_name", employeeName);
+    const { data } = await query;
+    setRows((data || []) as Row[]);
+  }
+
   // ====== Hapus satu baris ======
   async function handleDelete(row: Row) {
     if (busyId) return;
@@ -91,17 +105,16 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
 
     setBusyId(row.id);
 
-    // 1) Hapus file di storage (jika ada URL dan bisa diekstrak pathnya)
+    // 1) Hapus file di storage (jika bisa)
     const storagePath = extractStoragePathFromPublicUrl(row.file_url);
     if (storagePath) {
       const { error: delFileErr } = await supabase.storage.from(BUCKET).remove([storagePath]);
       if (delFileErr) {
-        // Kalau gagal hapus file, tetap lanjut hapus row DB (opsional: batalkan)
         console.warn("Gagal hapus file storage:", delFileErr.message);
       }
     }
 
-    // 2) Hapus baris di DB
+    // 2) Hapus baris DB
     const { error: delRowErr } = await supabase.from("sertifikat").delete().eq("id", row.id);
     if (delRowErr) {
       alert("Gagal menghapus data: " + delRowErr.message);
@@ -114,8 +127,64 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
     setBusyId(null);
   }
 
-  // Jika belum pilih pegawai (halaman kamu menampilkan tabel hanya setelah pilih pegawai),
-  // komponen boleh dikembalikan null supaya ringkas. Hapus blok ini jika ingin tetap tampil.
+  // ====== Simpan PDF baru (Edit) ======
+  async function handleSaveNewFile() {
+    if (!editRow || !newFile) return;
+    if (newFile.size > 10 * 1024 * 1024) {
+      alert("Ukuran PDF melebihi 10MB");
+      return;
+    }
+
+    setSaving(true);
+
+    // 1) Upload file baru
+    const folder = safe(editRow.employee_name || "pegawai");
+    const filename = `${Date.now()}-${safe(newFile.name)}`;
+    const path = `${folder}/${filename}`;
+
+    const { error: upErr } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, newFile, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: "application/pdf",
+      });
+
+    if (upErr) {
+      setSaving(false);
+      alert("Gagal mengunggah PDF baru: " + upErr.message);
+      return;
+    }
+
+    // 2) Public URL baru
+    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    const newUrl = pub.publicUrl;
+
+    // 3) Update baris DB
+    const { error: dbErr } = await supabase
+      .from("sertifikat")
+      .update({ file_url: newUrl })
+      .eq("id", editRow.id);
+
+    if (dbErr) {
+      setSaving(false);
+      alert("Gagal menyimpan URL baru: " + dbErr.message);
+      return;
+    }
+
+    // 4) Hapus file lama (opsional)
+    const oldPath = extractStoragePathFromPublicUrl(editRow.file_url);
+    if (oldPath) {
+      await supabase.storage.from(BUCKET).remove([oldPath]);
+    }
+
+    setSaving(false);
+    setEditRow(null);
+    setNewFile(null);
+    await refresh();
+  }
+
+  // Tabel hanya muncul saat sudah pilih pegawai (sesuai behavior-mu)
   if (!employeeName) return null;
 
   return (
@@ -180,6 +249,14 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
                       )}
 
                       <button
+                        onClick={() => setEditRow(r)}
+                        className="rounded-xl border px-3 py-1 hover:bg-gray-50"
+                        title="Ganti PDF"
+                      >
+                        Edit
+                      </button>
+
+                      <button
                         onClick={() => handleDelete(r)}
                         disabled={busyId === r.id}
                         className="rounded-xl border px-3 py-1 hover:bg-red-50 text-red-600 border-red-300 disabled:opacity-60"
@@ -195,6 +272,47 @@ export default function Sertifikatlist({ employeeName }: { employeeName?: string
           </tbody>
         </table>
       </div>
+
+      {/* ===== Modal Edit PDF ===== */}
+      {editRow && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+            <div className="mb-3">
+              <h3 className="text-lg font-semibold">Ganti PDF Sertifikat</h3>
+              <p className="text-xs text-gray-500">
+                {editRow.employee_name} — {editRow.training_name || "—"}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => setNewFile(e.target.files?.[0] || null)}
+                className="w-full rounded-md border px-3 py-2"
+              />
+              <p className="text-xs text-gray-500">PDF maksimal 10MB</p>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => { if (!saving) { setEditRow(null); setNewFile(null); } }}
+                className="rounded-xl border px-3 py-2 hover:bg-gray-50"
+                disabled={saving}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSaveNewFile}
+                disabled={!newFile || saving}
+                className="rounded-xl bg-blue-600 text-white px-4 py-2 hover:bg-blue-700 disabled:opacity-60"
+              >
+                {saving ? "Menyimpan…" : "Simpan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

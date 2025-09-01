@@ -20,6 +20,7 @@ export default function Page() {
 
   const [selectedEmployee, setSelectedEmployee] = useState<string>("");
 
+  // Ambil data awal untuk chart & ringkasan
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -43,6 +44,7 @@ export default function Page() {
     };
   }, []);
 
+  // Agregasi JP per pegawai untuk chart
   const chartData = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of rows) {
@@ -55,6 +57,7 @@ export default function Page() {
     return result;
   }, [rows]);
 
+  // Ringkasan statistik
   const TARGET_JP = 20;
   const summary = useMemo(() => {
     const totalCerts = rows.length;
@@ -92,6 +95,7 @@ export default function Page() {
     };
   }, [rows]);
 
+  // Submit form (upload PDF → dapat public URL → simpan row)
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -100,15 +104,33 @@ export default function Page() {
     const employeeName = String(fd.get("employeeName") || "").trim();
     const certNumberRaw = String(fd.get("certNumber") || "").trim();
     const trainingName = String(fd.get("trainingName") || "").trim();
-    const jp = Number(fd.get("jp") || 0);
+    const jpRaw = String(fd.get("jp") || "").trim(); // string agar bisa '-' atau desimal
     const file = fd.get("file") as File | null;
 
     const certNumber = certNumberRaw === "" ? "-" : certNumberRaw;
 
-    if (!employeeName || !trainingName || !jp || !file) {
+    // Validasi minimal
+    if (!employeeName || !trainingName || jpRaw === "" || !file) {
       alert("Nama pegawai, nama diklat, JP, dan PDF wajib diisi!");
       return;
     }
+
+    // JP boleh '-' atau angka desimal non-negatif (contoh: 0, 2, 2.5)
+    const decimalRegex = /^\d+(\.\d+)?$/; // 12 atau 12.5
+    let jpVal = 0;
+    if (jpRaw === "-") {
+      jpVal = 0;
+    } else if (decimalRegex.test(jpRaw)) {
+      jpVal = parseFloat(jpRaw);
+      if (jpVal < 0) {
+        alert("Banyak JP tidak boleh negatif.");
+        return;
+      }
+    } else {
+      alert("Banyak JP harus berupa '-' atau angka desimal non-negatif (misal 0, 2, 2.5).");
+      return;
+    }
+
     if (file.size > 10 * 1024 * 1024) {
       alert("Ukuran file melebihi 10MB");
       return;
@@ -116,6 +138,7 @@ export default function Page() {
 
     setLoading(true);
 
+    // 1) Upload ke Storage
     const BUCKET = "sertifikat";
     const safeName = file.name.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
     const folder = employeeName.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
@@ -132,14 +155,16 @@ export default function Page() {
       return;
     }
 
+    // 2) Ambil public URL
     const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
     const publicUrl = pub.publicUrl;
 
+    // 3) Simpan ke tabel
     const { error: dbErr } = await supabase.from("sertifikat").insert({
       employee_name: employeeName,
       cert_number: certNumber,
       training_name: trainingName,
-      jp,
+      jp: jpVal, // ANGKA (bisa desimal)
       file_url: publicUrl,
     });
 
@@ -151,8 +176,9 @@ export default function Page() {
 
     alert("Data berhasil tersimpan!");
     form.reset();
-    setSelectedEmployee(employeeName);
+    setSelectedEmployee(employeeName); // auto filter tabel ke pegawai ini
 
+    // Refresh data untuk chart & ringkasan
     setLoadingChart(true);
     const { data, error: err2 } = await supabase
       .from("sertifikat")
@@ -169,39 +195,38 @@ export default function Page() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
       <div className="space-y-10">
-        {/* ===== RINGKASAN (di atas chart) ===== */}
-<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-  <div className="rounded-xl bg-[#00AEEF]/90 text-white p-4 shadow-md">
-    <p className="text-xs opacity-80">Total Sertifikat</p>
-    <p className="mt-1 text-2xl font-bold">{summary.totalCerts}</p>
-  </div>
-  <div className="rounded-xl bg-[#0077C8]/90 text-white p-4 shadow-md">
-    <p className="text-xs opacity-80">Total JP</p>
-    <p className="mt-1 text-2xl font-bold">{summary.totalJP}</p>
-  </div>
-  <div className="rounded-xl bg-[#FF6F20]/90 text-white p-4 shadow-md">
-    <p className="text-xs opacity-80">Rata-rata JP</p>
-    <p className="mt-1 text-2xl font-bold">{summary.avgJP.toFixed(1)}</p>
-  </div>
-  <div className="rounded-xl bg-[#00A99D]/90 text-white p-4 shadow-md">
-    <p className="text-xs opacity-80">Capai Target (≥20 JP)</p>
-    <p className="mt-1 text-2xl font-bold">
-      {summary.reachedTargetCount}/{summary.totalEmployees}
-    </p>
-  </div>
-  <div className="rounded-xl bg-[#00558C]/90 text-white p-4 shadow-md">
-    <p className="text-xs opacity-80">Pegawai Teraktif</p>
-    <p className="mt-1 text-sm font-semibold">
-      {summary.topEmployee?.name ?? "—"}
-    </p>
-    <p className="text-xs opacity-80">{summary.topEmployee?.jp ?? 0} JP</p>
-  </div>
-  <div className="rounded-xl bg-[#29ABE2]/90 text-white p-4 shadow-md">
-    <p className="text-xs opacity-80">Upload Hari Ini</p>
-    <p className="mt-1 text-2xl font-bold">{summary.uploadsToday}</p>
-  </div>
-</div>
-
+        {/* ===== RINGKASAN (warna Sensus Ekonomi) ===== */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="rounded-xl bg-[#00AEEF]/90 text-white p-4 shadow-md">
+            <p className="text-xs opacity-80">Total Sertifikat</p>
+            <p className="mt-1 text-2xl font-bold">{summary.totalCerts}</p>
+          </div>
+          <div className="rounded-xl bg-[#0077C8]/90 text-white p-4 shadow-md">
+            <p className="text-xs opacity-80">Total JP</p>
+            <p className="mt-1 text-2xl font-bold">{summary.totalJP}</p>
+          </div>
+          <div className="rounded-xl bg-[#FF6F20]/90 text-white p-4 shadow-md">
+            <p className="text-xs opacity-80">Rata-rata JP</p>
+            <p className="mt-1 text-2xl font-bold">{summary.avgJP.toFixed(1)}</p>
+          </div>
+          <div className="rounded-xl bg-[#00A99D]/90 text-white p-4 shadow-md">
+            <p className="text-xs opacity-80">Capai Target (≥20 JP)</p>
+            <p className="mt-1 text-2xl font-bold">
+              {summary.reachedTargetCount}/{summary.totalEmployees}
+            </p>
+          </div>
+          <div className="rounded-xl bg-[#00558C]/90 text-white p-4 shadow-md">
+            <p className="text-xs opacity-80">Pegawai Teraktif</p>
+            <p className="mt-1 text-sm font-semibold">
+              {summary.topEmployee?.name ?? "—"}
+            </p>
+            <p className="text-xs opacity-80">{summary.topEmployee?.jp ?? 0} JP</p>
+          </div>
+          <div className="rounded-xl bg-[#29ABE2]/90 text-white p-4 shadow-md">
+            <p className="text-xs opacity-80">Upload Hari Ini</p>
+            <p className="mt-1 text-2xl font-bold">{summary.uploadsToday}</p>
+          </div>
+        </div>
 
         {/* === CHART === */}
         <section className="rounded-xl border bg-white shadow-sm p-4">
@@ -277,7 +302,7 @@ export default function Page() {
               />
             </div>
 
-            {/* Banyak JP */}
+            {/* Banyak JP (boleh '-', 0, atau desimal) */}
             <div className="flex flex-col gap-1">
               <label htmlFor="jp" className="text-sm font-medium">
                 Banyak JP
@@ -285,12 +310,16 @@ export default function Page() {
               <input
                 id="jp"
                 name="jp"
-                type="number"
-                min="1"
-                placeholder="contoh: 6"
+                type="text"
+                inputMode="decimal"
+                pattern="^-|\d+(\.\d+)?$"
+                placeholder="contoh: -, 0, 2.5"
                 className="rounded-md border px-3 py-2"
                 required
               />
+              <p className="text-xs text-gray-500">
+                Isi <b>-</b> jika tidak ada JP, atau angka (boleh desimal).
+              </p>
             </div>
 
             {/* Upload File Sertifikat */}
