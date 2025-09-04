@@ -79,10 +79,13 @@ export default function Page() {
 
     const reachedTargetCount = Array.from(perEmp.values()).filter((v) => v >= TARGET_JP).length;
 
-    const today = new Date().toDateString();
-    const uploadsToday = rows.filter((r) =>
-      r.created_at ? new Date(r.created_at).toDateString() === today : false
-    ).length;
+    // === Upload Bulan Ini ===
+    const nowYM = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+    const uploadsThisMonth = rows.filter((r) => {
+      if (!r.created_at) return false;
+      const ym = new Date(r.created_at).toISOString().slice(0, 7);
+      return ym === nowYM;
+    }).length;
 
     return {
       totalCerts,
@@ -91,7 +94,7 @@ export default function Page() {
       topEmployee: top,
       reachedTargetCount,
       totalEmployees: EMPLOYEE_NAMES.length,
-      uploadsToday,
+      uploadsThisMonth,
     };
   }, [rows]);
 
@@ -223,8 +226,8 @@ export default function Page() {
             <p className="text-xs opacity-80">{summary.topEmployee?.jp ?? 0} JP</p>
           </div>
           <div className="rounded-xl bg-[#29ABE2]/90 text-white p-4 shadow-md">
-            <p className="text-xs opacity-80">Upload Hari Ini</p>
-            <p className="mt-1 text-2xl font-bold">{summary.uploadsToday}</p>
+            <p className="text-xs opacity-80">Upload Bulan Ini</p>
+            <p className="mt-1 text-2xl font-bold">{summary.uploadsThisMonth}</p>
           </div>
         </div>
 
@@ -312,7 +315,8 @@ export default function Page() {
                 name="jp"
                 type="text"
                 inputMode="decimal"
-                pattern="^-|\d+(\.\d+)?$"
+                // regex: '-' ATAU angka desimal non-negatif
+                pattern="^(-|\\d+(\\.\\d+)?)$"
                 placeholder="contoh: -, 0, 2.5"
                 className="rounded-md border px-3 py-2"
                 required
